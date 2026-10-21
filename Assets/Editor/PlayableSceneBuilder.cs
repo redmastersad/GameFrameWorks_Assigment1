@@ -124,7 +124,11 @@ namespace GameFrameworks.Editor
             Animator animator = visualGO.GetComponent<Animator>();
             if (animator == null) animator = visualGO.AddComponent<Animator>();
 
-            RuntimeAnimatorController runtimeController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(PeasantControllerPath);
+            RuntimeAnimatorController runtimeController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>("Assets/Animations/Player_AnimatorController.controller");
+            if (runtimeController == null)
+            {
+                runtimeController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(PeasantControllerPath);
+            }
             if (runtimeController != null)
             {
                 animator.runtimeAnimatorController = runtimeController;

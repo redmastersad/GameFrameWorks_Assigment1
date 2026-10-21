@@ -18,6 +18,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Transform cameraTransform;
     [SerializeField] private bool cameraRelative = true;
     [SerializeField] private Animator animator;
+    [SerializeField] private float attackDuration = 0.8f;
 
     public float WalkSpeed { get => walkSpeed; set => walkSpeed = value; }
     public float SprintSpeed { get => sprintSpeed; set => sprintSpeed = value; }
@@ -32,6 +33,8 @@ public class PlayerController : MonoBehaviour
     private Vector2 moveInput;
     private bool isSprintPressed;
     private bool jumpRequested;
+    private bool attackRequested;
+    private float attackTimer;
     private float jumpBufferTimer;
     private float coyoteTimer;
     private float jumpCooldownTimer;
@@ -44,6 +47,7 @@ public class PlayerController : MonoBehaviour
     private static readonly int RunningHash = Animator.StringToHash("Running");
     private static readonly int JumpHash = Animator.StringToHash("Jump");
     private static readonly int LandHash = Animator.StringToHash("Land");
+    private static readonly int AttackHash = Animator.StringToHash("Attack");
     private static readonly int MotionScaleHash = Animator.StringToHash("MotionScale");
 
     public bool IsGrounded => isGrounded;
@@ -76,12 +80,26 @@ public class PlayerController : MonoBehaviour
         if (jumpBufferTimer > 0f) jumpBufferTimer -= Time.deltaTime;
         if (coyoteTimer > 0f) coyoteTimer -= Time.deltaTime;
         if (jumpCooldownTimer > 0f) jumpCooldownTimer -= Time.deltaTime;
+        if (attackTimer > 0f) attackTimer -= Time.deltaTime;
 
         CheckGround();
 
         if (isGrounded)
         {
             coyoteTimer = CoyoteDuration;
+        }
+
+        if (attackRequested)
+        {
+            attackRequested = false;
+            if (isGrounded && attackTimer <= 0f)
+            {
+                attackTimer = attackDuration;
+                if (animator != null)
+                {
+                    animator.SetTrigger(AttackHash);
+                }
+            }
         }
 
         UpdateAnimator();
@@ -98,6 +116,12 @@ public class PlayerController : MonoBehaviour
     {
         Vector2 input = Vector2.zero;
 
+        var mouse = Mouse.current;
+        if (mouse != null && mouse.leftButton.wasPressedThisFrame)
+        {
+            attackRequested = true;
+        }
+
         var keyboard = Keyboard.current;
         if (keyboard != null)
         {
@@ -113,6 +137,11 @@ public class PlayerController : MonoBehaviour
                 jumpRequested = true;
                 jumpBufferTimer = JumpBufferDuration;
             }
+
+            if (keyboard.fKey.wasPressedThisFrame || keyboard.eKey.wasPressedThisFrame)
+            {
+                attackRequested = true;
+            }
         }
 
         var gamepad = Gamepad.current;
@@ -124,7 +153,7 @@ public class PlayerController : MonoBehaviour
                 input = stick;
             }
 
-            if (gamepad.rightTrigger.isPressed || gamepad.leftStickButton.isPressed)
+            if (gamepad.leftStickButton.isPressed)
             {
                 isSprintPressed = true;
             }
@@ -132,6 +161,11 @@ public class PlayerController : MonoBehaviour
             if (gamepad.buttonSouth.wasPressedThisFrame)
             {
                 jumpRequested = true;
+            }
+
+            if (gamepad.buttonWest.wasPressedThisFrame || gamepad.rightTrigger.wasPressedThisFrame)
+            {
+                attackRequested = true;
             }
         }
 
@@ -199,6 +233,10 @@ public class PlayerController : MonoBehaviour
 
         Vector3 moveDirection = (forward * moveInput.y + right * moveInput.x);
         float currentSpeed = isSprintPressed ? sprintSpeed : walkSpeed;
+        if (attackTimer > 0f)
+        {
+            currentSpeed *= 0.2f;
+        }
         Vector3 targetVelocity = moveDirection * currentSpeed;
 
         Vector3 currentVelocity = rb.linearVelocity;
