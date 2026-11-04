@@ -17,10 +17,28 @@ namespace GameFrameworks.Editor
         private const string StreetLampControllerPath = "Assets/Animations/StreetLamp_Controller.controller";
         private const string PlayerMaterialPath = "Assets/Materials/PlayerMaterial.mat";
         private const string PlayerAccentPath = "Assets/Materials/PlayerAccent.mat";
+        private const string WoodBrightMatPath = "Assets/Lowpoly_Crates/Materials/Wood_bright.mat";
+        private const string WoodDarkMatPath = "Assets/Lowpoly_Crates/Materials/Wood_dark.mat";
+
+        private static readonly string[] CropPrefabPaths = new[]
+        {
+            "Assets/FastMesh/Prefabs/Vegetable/Vege-Carrot.prefab",
+            "Assets/FastMesh/Prefabs/Vegetable/Vege-Corn.prefab",
+            "Assets/FastMesh/Prefabs/Vegetable/Vege-Potato.prefab",
+            "Assets/FastMesh/Prefabs/Vegetable/Vege-Tomato.prefab",
+            "Assets/FastMesh/Prefabs/Vegetable/Fruit-Apple A.prefab",
+            "Assets/FastMesh/Prefabs/Vegetable/Fruit-Apple B.prefab"
+        };
 
         [MenuItem("Assignment 2/Setup Playable Scene", false, 1)]
         public static void BuildPlayableScene()
         {
+            AnimatorStateMachineBuilder.ConfigureKevinIglesiasAssets();
+            AnimatorStateMachineBuilder.ConfigureMartialArtAnimationAssets();
+            AnimatorStateMachineBuilder.BuildAnimatorController();
+
+            ConfigureCropPrefabs();
+
             Scene activeScene = EditorSceneManager.GetActiveScene();
             if (activeScene.path != ScenePath)
             {
@@ -33,10 +51,203 @@ namespace GameFrameworks.Editor
             SetupCargoPlatform();
             SetupSecurityGate();
             SetupAnimatedStreetLamp();
+            SetupItemBox();
+            SetupEnvironmentCrops();
 
             EditorSceneManager.MarkSceneDirty(activeScene);
             EditorSceneManager.SaveScene(activeScene);
             AssetDatabase.SaveAssets();
+            Debug.Log("[PlayableSceneBuilder] Scene, Animator, Crop Prefabs, ItemBox, and Environment Crops configured and saved!");
+        }
+
+        public static void ConfigureCropPrefabs()
+        {
+            foreach (string prefabPath in CropPrefabPaths)
+            {
+                GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+                if (prefabAsset == null) continue;
+
+                GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
+                if (root == null) continue;
+
+                ConfigureCropObjectPhysicsAndScale(root);
+
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+            AssetDatabase.SaveAssets();
+        }
+
+        private static void ConfigureCropObjectPhysicsAndScale(GameObject cropObj)
+        {
+            if (cropObj == null) return;
+
+            MeshFilter[] meshFilters = cropObj.GetComponentsInChildren<MeshFilter>(true);
+            bool hasBounds = false;
+            Bounds combinedMeshBounds = default;
+            if (meshFilters != null)
+            {
+                foreach (var mf in meshFilters)
+                {
+                    if (mf == null || mf.sharedMesh == null) continue;
+                    if (!hasBounds)
+                    {
+                        combinedMeshBounds = mf.sharedMesh.bounds;
+                        hasBounds = true;
+                    }
+                    else
+                    {
+                        combinedMeshBounds.Encapsulate(mf.sharedMesh.bounds);
+                    }
+                }
+            }
+
+            if (hasBounds && meshFilters != null)
+            {
+                foreach (var mf in meshFilters)
+                {
+                    if (mf != null && mf.transform != cropObj.transform)
+                    {
+                        mf.transform.localPosition = -combinedMeshBounds.center;
+                    }
+                }
+            }
+
+            float maxMeshDim = hasBounds
+                ? Mathf.Max(combinedMeshBounds.size.x, combinedMeshBounds.size.y, combinedMeshBounds.size.z)
+                : 0.4f;
+            if (maxMeshDim < 0.0001f) maxMeshDim = 0.4f;
+
+            float targetWorldSize = 0.36f;
+            float uniformScale = targetWorldSize / maxMeshDim;
+            cropObj.transform.localScale = new Vector3(uniformScale, uniformScale, uniformScale);
+
+            Rigidbody rb = cropObj.GetComponent<Rigidbody>();
+            if (rb == null) rb = cropObj.AddComponent<Rigidbody>();
+            rb.mass = 0.8f;
+            rb.linearDamping = 0.15f;
+            rb.angularDamping = 0.25f;
+            rb.useGravity = true;
+            rb.isKinematic = false;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+            rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+
+            SphereCollider sphereCol = cropObj.GetComponent<SphereCollider>();
+            if (sphereCol == null) sphereCol = cropObj.AddComponent<SphereCollider>();
+            sphereCol.isTrigger = false;
+            sphereCol.center = Vector3.zero;
+            sphereCol.radius = maxMeshDim * 0.45f;
+
+            CropItem cropItem = cropObj.GetComponent<CropItem>();
+            if (cropItem == null) cropItem = cropObj.AddComponent<CropItem>();
+            cropItem.CropType = cropObj.name.Replace("(Clone)", "").Trim();
+        }
+
+        private static void SetupItemBox()
+        {
+            GameObject existingBox = GameObject.Find("ItemBox");
+            if (existingBox != null)
+            {
+                Object.DestroyImmediate(existingBox);
+            }
+
+            GameObject itemBox = new GameObject("ItemBox");
+            itemBox.transform.position = new Vector3(1.5f, 0.0f, -3.2f);
+            itemBox.transform.rotation = Quaternion.Euler(0f, -20f, 0f);
+
+            Material woodBright = AssetDatabase.LoadAssetAtPath<Material>(WoodBrightMatPath);
+            Material woodDark = AssetDatabase.LoadAssetAtPath<Material>(WoodDarkMatPath);
+            if (woodBright == null) woodBright = AssetDatabase.LoadAssetAtPath<Material>(PlayerAccentPath);
+            if (woodDark == null) woodDark = AssetDatabase.LoadAssetAtPath<Material>(PlayerMaterialPath);
+
+            CreateBoxPart(itemBox.transform, "Box_Bottom", new Vector3(0f, 0.06f, 0f), new Vector3(1.7f, 0.12f, 1.7f), woodDark);
+            CreateBoxPart(itemBox.transform, "Wall_North", new Vector3(0f, 0.45f, 0.79f), new Vector3(1.7f, 0.78f, 0.12f), woodBright);
+            CreateBoxPart(itemBox.transform, "Wall_South", new Vector3(0f, 0.45f, -0.79f), new Vector3(1.7f, 0.78f, 0.12f), woodBright);
+            CreateBoxPart(itemBox.transform, "Wall_East", new Vector3(0.79f, 0.45f, 0f), new Vector3(0.12f, 0.78f, 1.46f), woodBright);
+            CreateBoxPart(itemBox.transform, "Wall_West", new Vector3(-0.79f, 0.45f, 0f), new Vector3(0.12f, 0.78f, 1.46f), woodBright);
+
+            CreateBoxPart(itemBox.transform, "Post_NE", new Vector3(0.79f, 0.48f, 0.79f), new Vector3(0.16f, 0.88f, 0.16f), woodDark);
+            CreateBoxPart(itemBox.transform, "Post_NW", new Vector3(-0.79f, 0.48f, 0.79f), new Vector3(0.16f, 0.88f, 0.16f), woodDark);
+            CreateBoxPart(itemBox.transform, "Post_SE", new Vector3(0.79f, 0.48f, -0.79f), new Vector3(0.16f, 0.88f, 0.16f), woodDark);
+            CreateBoxPart(itemBox.transform, "Post_SW", new Vector3(-0.79f, 0.48f, -0.79f), new Vector3(0.16f, 0.88f, 0.16f), woodDark);
+
+            BoxCollider triggerCol = itemBox.AddComponent<BoxCollider>();
+            triggerCol.isTrigger = true;
+            triggerCol.center = new Vector3(0f, 0.55f, 0f);
+            triggerCol.size = new Vector3(1.55f, 0.95f, 1.55f);
+
+            itemBox.AddComponent<CropItemBox>();
+        }
+
+        private static void CreateBoxPart(Transform parent, string name, Vector3 localPos, Vector3 localScale, Material mat)
+        {
+            GameObject part = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            part.name = name;
+            part.transform.SetParent(parent, false);
+            part.transform.localPosition = localPos;
+            part.transform.localScale = localScale;
+            if (mat != null)
+            {
+                MeshRenderer mr = part.GetComponent<MeshRenderer>();
+                if (mr != null) mr.sharedMaterial = mat;
+            }
+        }
+
+        private static void SetupEnvironmentCrops()
+        {
+            GameObject existingContainer = GameObject.Find("EnvironmentCrops");
+            if (existingContainer != null)
+            {
+                Object.DestroyImmediate(existingContainer);
+            }
+
+            CropItem[] oldCrops = Object.FindObjectsByType<CropItem>(FindObjectsSortMode.None);
+            foreach (var old in oldCrops)
+            {
+                if (old != null && old.gameObject != null)
+                {
+                    Object.DestroyImmediate(old.gameObject);
+                }
+            }
+
+            GameObject container = new GameObject("EnvironmentCrops");
+            container.transform.position = Vector3.zero;
+
+            Vector3[] spawnPositions = new[]
+            {
+                new Vector3(-1.4f, 0.22f, -4.4f),
+                new Vector3(-0.4f, 0.22f, -4.8f),
+                new Vector3(-2.3f, 0.22f, -4.7f),
+                new Vector3(0.2f, 0.22f, -5.6f),
+                new Vector3(-2.8f, 0.22f, -6.2f),
+                new Vector3(-0.8f, 0.22f, -3.3f),
+
+                new Vector3(-4.2f, 0.22f, -2.5f),
+                new Vector3(-5.5f, 0.22f, 0.5f),
+                new Vector3(-3.0f, 0.22f, 2.2f),
+                new Vector3(-1.0f, 0.22f, 1.5f),
+                new Vector3(1.8f, 0.22f, 0.8f),
+                new Vector3(3.6f, 0.22f, -1.2f),
+                new Vector3(4.2f, 0.22f, 2.5f),
+                new Vector3(0.5f, 0.22f, 4.2f),
+                new Vector3(-3.8f, 0.22f, 5.0f),
+                new Vector3(2.4f, 0.22f, 5.5f)
+            };
+
+            for (int i = 0; i < spawnPositions.Length; i++)
+            {
+                string prefabPath = CropPrefabPaths[i % CropPrefabPaths.Length];
+                GameObject prefabAsset = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+                if (prefabAsset == null) continue;
+
+                GameObject cropInstance = (GameObject)PrefabUtility.InstantiatePrefab(prefabAsset);
+                cropInstance.name = $"{prefabAsset.name}_{i + 1:00}";
+                cropInstance.transform.SetParent(container.transform, true);
+                cropInstance.transform.position = spawnPositions[i];
+                cropInstance.transform.rotation = Quaternion.Euler(0f, (i * 47f) % 360f, 0f);
+
+                ConfigureCropObjectPhysicsAndScale(cropInstance);
+            }
         }
 
         private static void SetupDirectionalLight()
@@ -98,10 +309,23 @@ namespace GameFrameworks.Editor
                 camTarget = ctGO.transform;
             }
 
-            Transform oldVisual = player.transform.Find("Visual");
-            if (oldVisual != null)
+            Transform holdPoint = player.transform.Find("HoldPoint");
+            if (holdPoint == null)
             {
-                Object.DestroyImmediate(oldVisual.gameObject);
+                GameObject holdGO = new GameObject("HoldPoint");
+                holdGO.transform.SetParent(player.transform, false);
+                holdPoint = holdGO.transform;
+            }
+            holdPoint.localPosition = new Vector3(0f, 1.0f, 0.5f);
+            holdPoint.localRotation = Quaternion.identity;
+
+            // Remove all existing visual/character children to prevent duplicate character meshes
+            for (int i = player.transform.childCount - 1; i >= 0; i--)
+            {
+                Transform child = player.transform.GetChild(i);
+                if (child == null) continue;
+                if (child == camTarget || child == holdPoint) continue;
+                Object.DestroyImmediate(child.gameObject);
             }
 
             GameObject visualGO = null;
@@ -138,6 +362,10 @@ namespace GameFrameworks.Editor
             PlayerController controller = player.GetComponent<PlayerController>();
             if (controller == null) controller = player.AddComponent<PlayerController>();
             controller.CharacterAnimator = animator;
+            controller.HoldPoint = holdPoint;
+            controller.PickupRange = 2.6f;
+            controller.ThrowForce = 6.5f;
+            controller.ThrowUpwardForce = 2.5f;
             controller.CameraRelative = true;
             controller.WalkSpeed = 4.2f;
             controller.SprintSpeed = 8.5f;
@@ -201,7 +429,7 @@ namespace GameFrameworks.Editor
             }
 
             CinemachineBrain brain = mainCamera.GetComponent<CinemachineBrain>();
-            if (brain == null) brain = mainCamera.AddComponent<CinemachineBrain>();
+            if (brain == null) brain = mainCamera.GetComponent<CinemachineBrain>();
 
             var oldOrbit = mainCamera.GetComponent<CameraOrbitController>();
             if (oldOrbit != null) Object.DestroyImmediate(oldOrbit);

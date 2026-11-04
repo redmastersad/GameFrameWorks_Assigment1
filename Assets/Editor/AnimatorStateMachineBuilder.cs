@@ -18,6 +18,7 @@ namespace GameFrameworks.Editor
         public static void BuildStateMachineMenu()
         {
             ConfigureKevinIglesiasAssets();
+            ConfigureMartialArtAnimationAssets();
             BuildAnimatorController();
             AssignControllerToPlayerInScene();
         }
@@ -68,6 +69,60 @@ namespace GameFrameworks.Editor
             AssetDatabase.Refresh();
         }
 
+        public static void ConfigureMartialArtAnimationAssets()
+        {
+            if (!Directory.Exists("Assets/Martial Art Animations Sample")) return;
+
+            string[] fbxFiles = Directory.GetFiles("Assets/Martial Art Animations Sample", "*.fbx", SearchOption.AllDirectories);
+            foreach (string file in fbxFiles)
+            {
+                string assetPath = file.Replace("\\", "/");
+                ModelImporter importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                if (importer != null)
+                {
+                    bool modified = false;
+                    if (importer.animationType != ModelImporterAnimationType.Human)
+                    {
+                        importer.animationType = ModelImporterAnimationType.Human;
+                        modified = true;
+                    }
+
+                    if (importer.avatarSetup != ModelImporterAvatarSetup.CreateFromThisModel)
+                    {
+                        importer.avatarSetup = ModelImporterAvatarSetup.CreateFromThisModel;
+                        modified = true;
+                    }
+
+                    ModelImporterClipAnimation[] clips = importer.clipAnimations;
+                    if (clips == null || clips.Length == 0)
+                    {
+                        clips = importer.defaultClipAnimations;
+                    }
+
+                    if (clips != null && clips.Length > 0)
+                    {
+                        foreach (var clip in clips)
+                        {
+                            bool shouldLoop = assetPath.Contains("Idle") || assetPath.Contains("Walk");
+                            if (clip.loopTime != shouldLoop)
+                            {
+                                clip.loopTime = shouldLoop;
+                                modified = true;
+                            }
+                        }
+                        importer.clipAnimations = clips;
+                        modified = true;
+                    }
+
+                    if (modified)
+                    {
+                        importer.SaveAndReimport();
+                    }
+                }
+            }
+            AssetDatabase.Refresh();
+        }
+
         public static AnimatorController BuildAnimatorController()
         {
             if (!AssetDatabase.IsValidFolder(ControllerFolder))
@@ -75,7 +130,6 @@ namespace GameFrameworks.Editor
                 AssetDatabase.CreateFolder("Assets", "Animations");
             }
 
-            // Load or create the Animator Controller
             AnimatorController controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(ControllerPath);
             if (controller == null)
             {
@@ -88,6 +142,7 @@ namespace GameFrameworks.Editor
             EnsureParameter(controller, "Jump", AnimatorControllerParameterType.Trigger);
             EnsureParameter(controller, "Land", AnimatorControllerParameterType.Trigger);
             EnsureParameter(controller, "Attack", AnimatorControllerParameterType.Trigger);
+            EnsureParameter(controller, "Grab", AnimatorControllerParameterType.Trigger);
             EnsureParameter(controller, "MotionScale", AnimatorControllerParameterType.Float);
 
             // 2. Fetch Base Layer and StateMachine
@@ -100,16 +155,22 @@ namespace GameFrameworks.Editor
                 stateMachine.RemoveState(childState.state);
             }
 
-            // 3. Find Animation Clips (Priority: Human Basic Motions / Kevin Iglesias, fallback: Cameron/Peasant)
+            // 3. Find Animation Clips
             AnimationClip idleClip = FindClip(new[] { "HumanM@Idle01", "HumanF@Idle01", "Idle01", "Idle", "metarig|Idle" });
             AnimationClip walkClip = FindClip(new[] { "HumanM@Walk01_Forward", "HumanF@Walk01_Forward", "Walk01_Forward", "Walk", "metarig|Walk" });
             AnimationClip runClip = FindClip(new[] { "HumanM@Run01_Forward", "HumanF@Run01_Forward", "Run01_Forward", "Run" });
             AnimationClip jumpClip = FindClip(new[] { "HumanM@Jump01", "HumanF@Jump01", "Jump01", "Jump", "JumpUp" });
             AnimationClip attackClip = FindClip(new[] { "HumanM@Attack1H01_R", "Attack1H01_R", "Attack1H01", "Attack", "Punch", "Strike" });
+            AnimationClip grabClip = FindClip(new[] { "Grab_Start", "Grab_Hit_A", "Grab_Idle_A", "Grab_Break_A", "Grab" });
 
             if (attackClip == null)
             {
                 attackClip = CreateOrGetPlaceholderAttackClip();
+            }
+
+            if (grabClip == null)
+            {
+                grabClip = attackClip;
             }
 
             // 4. Create States
@@ -123,20 +184,25 @@ namespace GameFrameworks.Editor
             walkState.motion = walkClip;
             walkState.speed = 1.0f;
 
-            // Run (Extra Points)
+            // Run
             AnimatorState runState = stateMachine.AddState("Run", new Vector3(250, 320, 0));
             runState.motion = runClip;
             runState.speed = 1.15f;
 
             // Jump
-            AnimatorState jumpState = stateMachine.AddState("Jump", new Vector3(550, 160, 0));
+            AnimatorState jumpState = stateMachine.AddState("Jump", new Vector3(550, 140, 0));
             jumpState.motion = jumpClip;
             jumpState.speed = 1.0f;
 
-            // Attack (Extra Points)
-            AnimatorState attackState = stateMachine.AddState("Attack", new Vector3(550, 280, 0));
+            // Attack
+            AnimatorState attackState = stateMachine.AddState("Attack", new Vector3(550, 260, 0));
             attackState.motion = attackClip;
             attackState.speed = 1.0f;
+
+            // Grab (Extra Points - Crop Pickup Animation)
+            AnimatorState grabState = stateMachine.AddState("Grab", new Vector3(550, 380, 0));
+            grabState.motion = grabClip;
+            grabState.speed = 1.1f;
 
             // 5. Create Transitions & Conditions
 
@@ -184,14 +250,12 @@ namespace GameFrameworks.Editor
             runToJump.AddCondition(AnimatorConditionMode.If, 0, "Jump");
 
             // --- Return from Jump to appropriate state ---
-            // 1. To Idle on Land
             var jumpToIdle = jumpState.AddTransition(idleState);
             jumpToIdle.hasExitTime = false;
             jumpToIdle.duration = 0.15f;
             jumpToIdle.AddCondition(AnimatorConditionMode.If, 0, "Land");
             jumpToIdle.AddCondition(AnimatorConditionMode.IfNot, 0, "Walking");
 
-            // 2. To Walk on Land
             var jumpToWalk = jumpState.AddTransition(walkState);
             jumpToWalk.hasExitTime = false;
             jumpToWalk.duration = 0.15f;
@@ -199,7 +263,6 @@ namespace GameFrameworks.Editor
             jumpToWalk.AddCondition(AnimatorConditionMode.If, 0, "Walking");
             jumpToWalk.AddCondition(AnimatorConditionMode.IfNot, 0, "Running");
 
-            // 3. To Run on Land
             var jumpToRun = jumpState.AddTransition(runState);
             jumpToRun.hasExitTime = false;
             jumpToRun.duration = 0.15f;
@@ -207,7 +270,6 @@ namespace GameFrameworks.Editor
             jumpToRun.AddCondition(AnimatorConditionMode.If, 0, "Walking");
             jumpToRun.AddCondition(AnimatorConditionMode.If, 0, "Running");
 
-            // 4. Fallback exit time from Jump to Idle
             var jumpFallback = jumpState.AddTransition(idleState);
             jumpFallback.hasExitTime = true;
             jumpFallback.exitTime = 0.9f;
@@ -230,14 +292,12 @@ namespace GameFrameworks.Editor
             runToAttack.AddCondition(AnimatorConditionMode.If, 0, "Attack");
 
             // --- Return from Attack to appropriate state ---
-            // 1. To Idle after attack finishes
             var attackToIdle = attackState.AddTransition(idleState);
             attackToIdle.hasExitTime = true;
             attackToIdle.exitTime = 0.85f;
             attackToIdle.duration = 0.15f;
             attackToIdle.AddCondition(AnimatorConditionMode.IfNot, 0, "Walking");
 
-            // 2. To Walk after attack finishes
             var attackToWalk = attackState.AddTransition(walkState);
             attackToWalk.hasExitTime = true;
             attackToWalk.exitTime = 0.85f;
@@ -245,7 +305,6 @@ namespace GameFrameworks.Editor
             attackToWalk.AddCondition(AnimatorConditionMode.If, 0, "Walking");
             attackToWalk.AddCondition(AnimatorConditionMode.IfNot, 0, "Running");
 
-            // 3. To Run after attack finishes
             var attackToRun = attackState.AddTransition(runState);
             attackToRun.hasExitTime = true;
             attackToRun.exitTime = 0.85f;
@@ -253,11 +312,48 @@ namespace GameFrameworks.Editor
             attackToRun.AddCondition(AnimatorConditionMode.If, 0, "Walking");
             attackToRun.AddCondition(AnimatorConditionMode.If, 0, "Running");
 
+            // --- Grab Transitions (From Idle, Walk, Run) ---
+            var idleToGrab = idleState.AddTransition(grabState);
+            idleToGrab.hasExitTime = false;
+            idleToGrab.duration = 0.1f;
+            idleToGrab.AddCondition(AnimatorConditionMode.If, 0, "Grab");
+
+            var walkToGrab = walkState.AddTransition(grabState);
+            walkToGrab.hasExitTime = false;
+            walkToGrab.duration = 0.1f;
+            walkToGrab.AddCondition(AnimatorConditionMode.If, 0, "Grab");
+
+            var runToGrab = runState.AddTransition(grabState);
+            runToGrab.hasExitTime = false;
+            runToGrab.duration = 0.1f;
+            runToGrab.AddCondition(AnimatorConditionMode.If, 0, "Grab");
+
+            // --- Return from Grab to appropriate state (works alongside player movement) ---
+            var grabToIdle = grabState.AddTransition(idleState);
+            grabToIdle.hasExitTime = true;
+            grabToIdle.exitTime = 0.85f;
+            grabToIdle.duration = 0.15f;
+            grabToIdle.AddCondition(AnimatorConditionMode.IfNot, 0, "Walking");
+
+            var grabToWalk = grabState.AddTransition(walkState);
+            grabToWalk.hasExitTime = true;
+            grabToWalk.exitTime = 0.85f;
+            grabToWalk.duration = 0.15f;
+            grabToWalk.AddCondition(AnimatorConditionMode.If, 0, "Walking");
+            grabToWalk.AddCondition(AnimatorConditionMode.IfNot, 0, "Running");
+
+            var grabToRun = grabState.AddTransition(runState);
+            grabToRun.hasExitTime = true;
+            grabToRun.exitTime = 0.85f;
+            grabToRun.duration = 0.15f;
+            grabToRun.AddCondition(AnimatorConditionMode.If, 0, "Walking");
+            grabToRun.AddCondition(AnimatorConditionMode.If, 0, "Running");
+
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
 
             Debug.Log($"[AnimatorStateMachineBuilder] Successfully generated State Machine at: {ControllerPath}");
-            Debug.Log($"[AnimatorStateMachineBuilder] Clips used: Idle='{(idleClip != null ? idleClip.name : "none")}', Walk='{(walkClip != null ? walkClip.name : "none")}', Run='{(runClip != null ? runClip.name : "none")}', Jump='{(jumpClip != null ? jumpClip.name : "none")}', Attack='{(attackClip != null ? attackClip.name : "none")}'");
+            Debug.Log($"[AnimatorStateMachineBuilder] Clips used: Idle='{(idleClip != null ? idleClip.name : "none")}', Walk='{(walkClip != null ? walkClip.name : "none")}', Run='{(runClip != null ? runClip.name : "none")}', Jump='{(jumpClip != null ? jumpClip.name : "none")}', Attack='{(attackClip != null ? attackClip.name : "none")}', Grab='{(grabClip != null ? grabClip.name : "none")}'");
 
             return controller;
         }
@@ -311,7 +407,6 @@ namespace GameFrameworks.Editor
 
         private static AnimationClip FindClip(string[] candidates)
         {
-            // 1. Check all clips in Assets
             string[] guids = AssetDatabase.FindAssets("t:AnimationClip");
             List<AnimationClip> allClips = new List<AnimationClip>();
 
@@ -322,7 +417,6 @@ namespace GameFrameworks.Editor
                 if (clip != null) allClips.Add(clip);
             }
 
-            // Also check sub-assets inside FBX models
             string[] fbxGuids = AssetDatabase.FindAssets("t:Model");
             foreach (string guid in fbxGuids)
             {
@@ -337,14 +431,12 @@ namespace GameFrameworks.Editor
                 }
             }
 
-            // Search by candidate preference
             foreach (string candidate in candidates)
             {
-                // Prefer Kevin Iglesias / Human Basic Motions
                 foreach (var clip in allClips)
                 {
                     string path = AssetDatabase.GetAssetPath(clip);
-                    if (path.Contains("Kevin") || path.Contains("Basic") || path.Contains("Human"))
+                    if (path.Contains("Kevin") || path.Contains("Basic") || path.Contains("Human") || path.Contains("Martial"))
                     {
                         if (clip.name.Equals(candidate, System.StringComparison.OrdinalIgnoreCase) ||
                             clip.name.Contains(candidate) ||
@@ -355,7 +447,6 @@ namespace GameFrameworks.Editor
                     }
                 }
 
-                // Fallback to any match
                 foreach (var clip in allClips)
                 {
                     string path = AssetDatabase.GetAssetPath(clip);
@@ -378,7 +469,6 @@ namespace GameFrameworks.Editor
             if (clip != null) return clip;
 
             clip = new AnimationClip { name = "Player_Attack" };
-            // Simple 0.6 second dummy clip curve to ensure valid duration
             AnimationCurve curve = AnimationCurve.Linear(0f, 0f, 0.6f, 1f);
             clip.SetCurve("", typeof(Transform), "localPosition.z", curve);
             AssetDatabase.CreateAsset(clip, attackClipPath);
